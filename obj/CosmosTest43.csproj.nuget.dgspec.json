@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\Ryan\\Documents\\VSCode_Workspace\\CosmosTest43\\CosmosTest43.csproj": {}
+    "C:\\Users\\ryoung\\VSCode_Workspace\\CosmosTest43\\CosmosTest43\\CosmosTest43.csproj": {}
   },
   "projects": {
-    "C:\\Users\\Ryan\\Documents\\VSCode_Workspace\\CosmosTest43\\CosmosTest43.csproj": {
+    "C:\\Users\\ryoung\\VSCode_Workspace\\CosmosTest43\\CosmosTest43\\CosmosTest43.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\Ryan\\Documents\\VSCode_Workspace\\CosmosTest43\\CosmosTest43.csproj",
+        "projectUniqueName": "C:\\Users\\ryoung\\VSCode_Workspace\\CosmosTest43\\CosmosTest43\\CosmosTest43.csproj",
         "projectName": "CosmosTest43",
-        "projectPath": "C:\\Users\\Ryan\\Documents\\VSCode_Workspace\\CosmosTest43\\CosmosTest43.csproj",
-        "packagesPath": "C:\\Users\\Ryan\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\Ryan\\Documents\\VSCode_Workspace\\CosmosTest43\\obj\\",
+        "projectPath": "C:\\Users\\ryoung\\VSCode_Workspace\\CosmosTest43\\CosmosTest43\\CosmosTest43.csproj",
+        "packagesPath": "C:\\Users\\ryoung\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\ryoung\\VSCode_Workspace\\CosmosTest43\\CosmosTest43\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\Ryan\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\ryoung\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [

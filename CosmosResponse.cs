@@ -10,5 +10,6 @@ namespace OF.Nexus.CosmosTest
         public long timeElapsed {get; set;}
         public double requestUnitsUsed {get; set;}
         public int documentCount {get; set;}
+        public bool success {get; set;}
     }
 }

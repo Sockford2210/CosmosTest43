@@ -13,11 +13,9 @@ namespace OF.Nexus.CosmosTest
     public class Tester
     {
         private CosmosInterface cosmosInterface;
-        private readonly string databaseName = "LargeDatasetTestDB"; 
-        private readonly string containerName = "LargeDatasetTestContainer";
-        private readonly string partitionKey = "/id";
-        private DateTime timeStampStart;
-        private int timeStampRangeDays;
+        private readonly string databaseName = "FunctionTestDatabase"; 
+        private readonly string containerName = "DocRefContainer";
+        private readonly string partitionKey = "/documentRef";
 
         public Tester()
         {
@@ -25,9 +23,7 @@ namespace OF.Nexus.CosmosTest
 
         public Tester(string cosmosUrl, string cosmosKey)
         {
-            this.cosmosInterface = new CosmosInterface(cosmosUrl, cosmosKey, databaseName);
-            this.timeStampStart = new DateTime(2021, 1, 1);
-            this.timeStampRangeDays = (int)(DateTime.Today - this.timeStampStart).TotalDays;   
+            this.cosmosInterface = new CosmosInterface(cosmosUrl, cosmosKey, databaseName);  
         }
 
         public async Task Run()
@@ -38,20 +34,15 @@ namespace OF.Nexus.CosmosTest
             {
                 Console.WriteLine("");
                 Console.WriteLine("MENU");
-                try
-                {
-                    int documentCount = await this.cosmosInterface.DocumentCount();
-                    Console.WriteLine("Document Count: " + documentCount);
-                }
-                catch(Exception)
-                {
-                    Console.WriteLine("Document Count: NOT FOUND");
-                }
+
+                int documentCount = await this.cosmosInterface.DocumentCount();
+                Console.WriteLine("Document Count: " + documentCount);              
                 
                 Console.WriteLine("Add random documents: 1");
                 Console.WriteLine("Read documents with point read: 2");
                 Console.WriteLine("Run SQL query on container: 3");
-                Console.WriteLine("Enter: ");
+                Console.WriteLine("Execute stored procedure: 4");
+                Console.Write("Enter: ");
                 string entry = Console.ReadLine();
                 switch(entry)
                 {
@@ -63,6 +54,9 @@ namespace OF.Nexus.CosmosTest
                         break;
                     case "3":
                         await this.QueryDocuments();
+                        break;
+                    case "4":
+                        await this.RunStoredProcedure();
                         break;
                     default:
                         exit = true;
@@ -80,49 +74,9 @@ namespace OF.Nexus.CosmosTest
 
         public async Task AddDocuments()
         {
-            Console.WriteLine("Amount to add: ");
+            Console.Write("Amount to add: ");
             int amountToAdd = Int32.Parse(Console.ReadLine());
-            List<Document> documentsToAdd = GetDocumentsToInsert(amountToAdd);
-            await this.cosmosInterface.AddBulkDocuments(documentsToAdd);
-        }
-
-        private String RandomDay()
-        {  
-            Random rand = new Random();
-            DateTime dateTime = this.timeStampStart.AddDays(rand.Next(this.timeStampRangeDays));
-            dateTime = dateTime.AddHours(rand.Next(24));
-            dateTime = dateTime.AddMinutes(rand.Next(60));
-            dateTime = dateTime.AddSeconds(rand.Next(60));
-            dateTime = dateTime.AddMilliseconds(rand.Next(1000));
-            return dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
-        }
-
-        private List<Document> GetDocumentsToInsert(int amountToAdd)
-        {
-            Random rand = new Random();
-            List<Document> documentsToAdd = new List<Document>(amountToAdd);
-            for(int i = 0; i < amountToAdd; i++)
-            {
-                string id = Guid.NewGuid().ToString();
-                string customerRef = "FCI" + (rand.Next(100000,100040)).ToString();
-                string policyRef = (rand.Next(123400,123430)).ToString();
-                dynamic documentMetadata = new 
-                { 
-                    documentClass = "SSG New Business",
-                    customerRef = customerRef,
-                    policyRef = policyRef,
-                    mimeType = "application/pdf",
-                    otherField = "example1"
-                };
-                documentsToAdd.Add(new Document 
-                { 
-                    id = id, 
-                    spUrl = "/sites/dev_sp_nexusdocumentlibrary/<week>-<year>", 
-                    timeStamp = this.RandomDay(), 
-                    metadata = documentMetadata 
-                });
-            }
-            return documentsToAdd;
+            await this.cosmosInterface.AddBulkDocuments(amountToAdd);
         }
 
         private async Task QueryDocuments()
@@ -162,9 +116,26 @@ namespace OF.Nexus.CosmosTest
             this.CsvWriter(responses, "Cosmos_Read_By_Id_Test", responses.Count);
         }
 
+        private async Task RunStoredProcedure()
+        {
+            Console.Write("Stored Procedure Id: ");
+            string storedProcedureId = Console.ReadLine();
+            Console.Write("Parameter in JSON: ");
+            string jsonObjectParam = Console.ReadLine();
+            Console.WriteLine("Executing stored procedure");
+            CosmosResponse cosmosResponse = await this.cosmosInterface.ExecuteStoredProcedureAsync(storedProcedureId, jsonObjectParam);
+            if(cosmosResponse.success)
+            {
+                Console.WriteLine("Great Success");
+            }
+            else{
+                Console.WriteLine("Much sad");
+            }
+        }
+
         private void CsvWriter(List<CosmosResponse> cosmosResponses, String fileName, int trialNumber)
         {
-            string filePath = String.Format(@"H:\sys-sharepoint\CosmosTest1655\{0}.csv",fileName);
+            string filePath = String.Format(@".\{0}.csv",fileName);
             if (!File.Exists(filePath))
             {
                 string firstline = ",Time Taken(ms)" + String.Concat(Enumerable.Repeat(",", trialNumber)) + "Request Charge (RU)";

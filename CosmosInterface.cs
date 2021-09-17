@@ -5,7 +5,9 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Diagnostics;
+using Newtonsoft.Json.Linq;
 
 namespace OF.Nexus.CosmosTest
 {
@@ -14,11 +16,15 @@ namespace OF.Nexus.CosmosTest
         public CosmosClient client { get; private set; }
         public Database database { get; private set; }
         public Container container { get; private set; }
+        private DateTime timeStampStart;
+        private int timeStampRangeDays;
 
         public CosmosInterface(string cosmosUrl, string cosmosKey, string databaseName)
         {
             try
             {
+                this.timeStampStart = new DateTime(2021, 1, 1);
+                this.timeStampRangeDays = (int)(DateTime.Today - this.timeStampStart).TotalDays; 
                 CosmosClientOptions clientOptions = new CosmosClientOptions() { AllowBulkExecution = true };
                 this.client = new CosmosClient(cosmosUrl, cosmosKey, clientOptions);
             }
@@ -34,13 +40,16 @@ namespace OF.Nexus.CosmosTest
             {
                 this.database = await client.CreateDatabaseIfNotExistsAsync(databaseName);
                 this.container = await database.CreateContainerIfNotExistsAsync(containerName, partitionKey);
-                string storedProcedureId = "spBulkImport";
+                
+                string storedProcedureId = "spInsertDocument";
                 StoredProcedureResponse storedProcedureResponse = await this.container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
                 {
                     Id = storedProcedureId,
                     Body = File.ReadAllText($@".\js\{storedProcedureId}.js")
                 });
-                Console.WriteLine(String.Format("Container: {0} created in database: {1}", containerName, databaseName));
+                Console.WriteLine("Connected");
+                Console.WriteLine($"Database: {databaseName}");
+                Console.WriteLine($"Container: {containerName}");
             }
             catch (System.Exception ex)
             {            
@@ -54,52 +63,117 @@ namespace OF.Nexus.CosmosTest
             try
             {
                 var query = this.container.GetItemQueryIterator<int>(new QueryDefinition(queryString));
-                var response = await query.ReadNextAsync();
-                return response.Resource.GetEnumerator().Current;
+                List<int> results = new List<int>();
+                while (query.HasMoreResults)
+                {
+                    var response = await query.ReadNextAsync();
+                    results.AddRange(response);
+                }
+                int documentCount = -1;
+                foreach (int result in results){
+                    Console.WriteLine(String.Format("Total number of documents in container: {0}", result));
+                    documentCount = result;
+                }
+                return documentCount;     
             }
             catch(Microsoft.Azure.Cosmos.CosmosException ex)
             {
                 Console.WriteLine("Cosmos returned error: " + ex.ToString());
                 return -1;
-            }           
+            }         
         }
 
-        public async Task AddBulkDocuments(List<Document> documents)
+        public async Task AddBulkDocuments(int amountToAdd)
         {
-            List<Task> concurrentTasks = new List<Task>();
+            List<Document> documents = GetDocumentsToInsert(amountToAdd);
+            List<Task<CosmosResponse>> concurrentTasks = new List<Task<CosmosResponse>>();
             List<CosmosResponse> cosmosResponses = new List<CosmosResponse>();
             int index = 0;
+            int sucessfulInserts = 0;
+            Stopwatch stopwatch = Stopwatch.StartNew();
             foreach(Document document in documents)
             {
-                if(index >= 5000 && (index % 5000 == 0))
+                if(index >= 20000)
                 {
-                    await this.RunConcurrentDocumentInserts(concurrentTasks);
+                    var cosmosResponse = await this.RunConcurrentDocumentInserts(concurrentTasks);
+                    sucessfulInserts += cosmosResponse.documents.Count;
                     concurrentTasks.Clear();
+                    index = 0;
                 }
                 else
                 {
-                    concurrentTasks.Add(container.CreateItemAsync(documents[index], new PartitionKey(documents[i].id)));
+                    concurrentTasks.Add(AddDocumentAsync(document));
                     index ++;
                 }
             }
 
+            if(concurrentTasks.Count > 0)
+            {
+                var cosmosResponse = await this.RunConcurrentDocumentInserts(concurrentTasks);
+                sucessfulInserts += cosmosResponse.documents.Count;
+                concurrentTasks.Clear();
+            }
+
+            stopwatch.Stop();
+            Console.WriteLine(String.Format("{0} documents successfully inserted, took {1}ms", sucessfulInserts, stopwatch.ElapsedMilliseconds));
+            if(sucessfulInserts < amountToAdd){
+                int remaining = amountToAdd - sucessfulInserts;
+                Console.WriteLine(String.Format("{0} documents failed insertion, Reattempting bulk document insertion with {1} documents", remaining, remaining));
+                await this.AddBulkDocuments(remaining);
+            }
         }
 
-        private async Task RunConcurrentDocumentInserts(List<Task> concurrentTasks)
+        private async Task<CosmosResponse> RunConcurrentDocumentInserts(List<Task<CosmosResponse>> concurrentTasks)
         {
+            CosmosResponse successfulResponse = new CosmosResponse();
+            successfulResponse.documents = new List<Document>();
+            successfulResponse.requestUnitsUsed = 0;
             try
             {
                 int numberToAdd = concurrentTasks.Count;
                 Stopwatch stopwatch = Stopwatch.StartNew();
-                await Task.WhenAll(concurrentTasks);
+                var responses = await Task.WhenAll(concurrentTasks);
                 stopwatch.Stop();
-                Console.WriteLine(String.Format("{0} documents added, took {1}ms", numberToAdd, stopwatch.ElapsedMilliseconds));
+                List<CosmosResponse> cosmosResponses = new List<CosmosResponse>(responses);
+                successfulResponse.timeElapsed = stopwatch.ElapsedMilliseconds;
+                foreach (CosmosResponse cosmosResponse in cosmosResponses)
+                {
+                    if (cosmosResponse.success){
+                        successfulResponse.documents.Add(cosmosResponse.documents[0]);
+                        successfulResponse.requestUnitsUsed += cosmosResponse.requestUnitsUsed;
+                    }
+                }
+                int successfulDocumentCount = successfulResponse.documents.Count;
+                long timeElapsed = successfulResponse.timeElapsed;
+                double totalRequestUnits = successfulResponse.requestUnitsUsed;
+                double requestUnitsPerSecond = totalRequestUnits/timeElapsed;
+                Console.WriteLine(String.Format("Batch of {0} documents added, took {1}ms and consumed a total of {2}RUs, and {3}RU/s", successfulDocumentCount, timeElapsed, totalRequestUnits, requestUnitsPerSecond ));
             }
-            catch (Microsoft.Azure.Cosmos.CosmosException ex)
+            catch (Exception ex)
             {
-                Console.WriteLine("Cosmos returned error: " + ex.ToString());
-                return;
+                Console.WriteLine("Error: " + ex.ToString());
             }
+
+            Thread.Sleep(5000);
+            return successfulResponse;
+        }
+
+        private async Task<CosmosResponse> AddDocumentAsync(Document document)
+        {
+            CosmosResponse cosmosResponse = new CosmosResponse();
+            cosmosResponse.documents = new List<Document>(){
+                document
+            };
+            try {
+                var response = await this.container.CreateItemAsync(document, new PartitionKey(document.documentRef));
+                cosmosResponse.requestUnitsUsed = response.RequestCharge;
+                cosmosResponse.success = true;
+            }
+            catch (Microsoft.Azure.Cosmos.CosmosException)
+            {
+                cosmosResponse.success = false;
+            }
+            return cosmosResponse;           
         }
 
         public async Task<CosmosResponse> ReadDocumentAsync(String id)
@@ -150,6 +224,64 @@ namespace OF.Nexus.CosmosTest
                 Console.WriteLine("Cosmos returned error: " + ex.ToString());
                 return cosmosResponse;
             }
+        }
+
+        public async Task<CosmosResponse> ExecuteStoredProcedureAsync(string storedProcedureId, dynamic jsonObjectParam)
+        {
+            CosmosResponse cosmosResponse = new CosmosResponse();
+            Document document = JObject.Parse(jsonObjectParam);
+            cosmosResponse.documents = new List<Document>(){ document };
+            try{
+                var result = await this.container.Scripts.ExecuteStoredProcedureAsync<string>(storedProcedureId, new PartitionKey(jsonObjectParam.id), new[] { jsonObjectParam });
+                Console.WriteLine("Response: " + result.ToString());
+                cosmosResponse.success = true;
+            }
+            catch (Microsoft.Azure.Cosmos.CosmosException ex)
+            {
+                Console.WriteLine("Cosmos returned error: " + ex.ToString());
+                cosmosResponse.success = false;
+            }
+            return cosmosResponse;
+        }
+
+        private List<Document> GetDocumentsToInsert(int amountToAdd)
+        {
+            Random rand = new Random();
+            List<Document> documentsToAdd = new List<Document>(amountToAdd);
+            for(int i = 0; i < amountToAdd; i++)
+            {
+                string documentRef = Guid.NewGuid().ToString();
+                string customerRef = "FCI" + (rand.Next(100000,100040)).ToString();
+                string policyRef = (rand.Next(123400,123430)).ToString();
+                dynamic documentMetadata = new 
+                { 
+                    documentClass = "SSG New Business",
+                    customerRef = customerRef,
+                    policyRef = policyRef,
+                    mimeType = "application/pdf",
+                    otherField = "example1"
+                };
+                documentsToAdd.Add(new Document 
+                { 
+                    documentRef = documentRef, 
+                    spUrl = "/sites/dev_sp_nexusdocumentlibrary/<week>-<year>", 
+                    timeStamp = this.RandomDay(), 
+                    metadata = documentMetadata 
+                });
+            }
+
+            return documentsToAdd;
+        }
+
+        private String RandomDay()
+        {  
+            Random rand = new Random();
+            DateTime dateTime = this.timeStampStart.AddDays(rand.Next(this.timeStampRangeDays));
+            dateTime = dateTime.AddHours(rand.Next(24));
+            dateTime = dateTime.AddMinutes(rand.Next(60));
+            dateTime = dateTime.AddSeconds(rand.Next(60));
+            dateTime = dateTime.AddMilliseconds(rand.Next(1000));
+            return dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         }
     }
 }
